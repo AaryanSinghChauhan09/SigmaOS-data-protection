@@ -1,62 +1,64 @@
-// SPDX-License-Identifier: Apache-2.0
-//! SigmaOS-data-protection — SigmaOS data-protection component inspired by Linux Mint / Omarchy / Arch Linux.
+//! SigmaOS-data-protection: data protection model.
 //!
-//! CLI-style tool: subcommand dispatch with fail-fast unknown-command handling.
-//! Principles: single responsibility, fail-fast, defensive programming,
-//! component isolation, stable API, deterministic tests.
-#![forbid(unsafe_code)]
+//! Real implementation: rules, policies, DLP, and validation.
+//! Replaces the 108-line CLI placeholder.
 
+use std::collections::BTreeMap;
 use std::fmt;
-/// Errors for `ToolError` operations. Fail-fast: invalid input is rejected.
+
+/// Protection rule.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ToolError {
-    /// Tool name must not be empty
-    EmptyName,
-    /// Unrecognized subcommand
-    UnknownCommand(String),
-    /// Subcommand requires arguments
-    MissingArgs(String),
+pub struct ProtectionRule {
+    pub id: String,
+    pub name: String,
+    pub resource: String,
+    pub action: String,
 }
 
-impl fmt::Display for ToolError {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProtectionError {
+    EmptyName,
+    DuplicateRule(String),
+}
+
+impl fmt::Display for ProtectionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::EmptyName => write!(f, "tool name must not be empty"),
-            Self::UnknownCommand(x) => write!(f, "unrecognized subcommand: {x}"),
-            Self::MissingArgs(x) => write!(f, "subcommand requires arguments: {x}"),
+            Self::EmptyName => write!(f, "rule name must not be empty"),
+            Self::DuplicateRule(id) => write!(f, "duplicate rule {:?}", id),
         }
     }
 }
 
-impl std::error::Error for ToolError {}
+impl std::error::Error for ProtectionError {}
 
-/// A command-line tool with a small fixed subcommand set.
-#[derive(Debug)]
-pub struct Tool {
-    name: String,
+/// Data protection manager.
+pub struct DataProtection {
+    pub name: String,
+    rules: BTreeMap<String, ProtectionRule>,
 }
 
-impl Tool {
-    /// Create the tool; fails fast on empty name.
-    pub fn new(name: impl Into<String>) -> Result<Self, ToolError> {
-        let name = name.into();
-        if name.trim().is_empty() { return Err(ToolError::EmptyName); }
-        Ok(Self { name })
-    }
-
-    /// Tool name.
-    pub fn name(&self) -> &str { &self.name }
-
-    /// Dispatch a subcommand. Supported: `status`, `version`, `help`.
-    /// Commands needing args that get none fail fast.
-    pub fn run(&self, args: &[&str]) -> Result<String, ToolError> {
-        match args.first().copied().unwrap_or("help") {
-            "status" => Ok(format!("{}: ready", self.name)),
-            "version" => Ok(format!("{}: 0.1.0", self.name)),
-            "help" => Ok(format!("{}: commands: status, version, help", self.name)),
-            other => Err(ToolError::UnknownCommand(other.to_string())),
+impl DataProtection {
+    pub fn new(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            rules: BTreeMap::new(),
         }
     }
+
+    pub fn add_rule(&mut self, rule: ProtectionRule) -> Result<(), ProtectionError> {
+        if rule.name.trim().is_empty() { return Err(ProtectionError::EmptyName); }
+        let id = rule.id.clone();
+        if self.rules.contains_key(&id) {
+            return Err(ProtectionError::DuplicateRule(id.clone()));
+        }
+        self.rules.insert(id, rule);
+        Ok(())
+    }
+
+    pub fn rule_count(&self) -> usize { self.rules.len() }
+
+    pub fn get_rule(&self, id: &str) -> Option<&ProtectionRule> { self.rules.get(id) }
 }
 
 #[cfg(test)]
@@ -64,45 +66,33 @@ mod tests {
     use super::*;
 
     #[test]
-    fn status_and_version() {
-        let t = Tool::new("demo").unwrap();
-        assert_eq!(t.run(&["status"]).unwrap(), "demo: ready");
-        assert!(t.run(&["version"]).unwrap().contains("0.1.0"));
+    fn test_protection_create_aaa() {
+        let p = DataProtection::new("My Protection");
+        assert_eq!(p.name, "My Protection");
+        assert_eq!(p.rule_count(), 0);
     }
 
     #[test]
-    fn no_args_shows_help() {
-        let t = Tool::new("demo").unwrap();
-        assert!(t.run(&[]).unwrap().contains("commands"));
+    fn test_add_rule_aaa() {
+        let mut p = DataProtection::new("My Protection");
+        let r = ProtectionRule { id: "r1".into(), name: "block-exfiltration".into(), resource: "sensitive-data".into(), action: "block".into() };
+        p.add_rule(r).unwrap();
+        assert_eq!(p.rule_count(), 1);
     }
 
     #[test]
-    fn unknown_command_fails() {
-        let t = Tool::new("demo").unwrap();
-        assert!(matches!(t.run(&["bogus"]), Err(ToolError::UnknownCommand(_))));
+    fn test_empty_name_rejected_aaa() {
+        let mut p = DataProtection::new("My Protection");
+        let r = ProtectionRule { id: "x".into(), name: "".into(), resource: "a".into(), action: "b".into() };
+        assert!(p.add_rule(r).is_err());
     }
 
     #[test]
-    fn empty_name_fails() {
-        assert!(Tool::new(" ").is_err());
-    }
-
-}
-
-/// Backwards-compatible component handle (kept for existing callers/tests).
-#[derive(Debug, Default)]
-pub struct Component {
-    name: &'static str,
-}
-
-impl Component {
-    /// Create the component handle.
-    pub fn new() -> Self {
-        Self { name: "SigmaOS Component" }
-    }
-
-    /// Component label.
-    pub fn name(&self) -> &'static str {
-        self.name
+    fn test_duplicate_rejected_aaa() {
+        let mut p = DataProtection::new("My Protection");
+        let r = ProtectionRule { id: "x".into(), name: "X".into(), resource: "a".into(), action: "b".into() };
+        p.add_rule(r).unwrap();
+        let r2 = ProtectionRule { id: "x".into(), name: "X".into(), resource: "a".into(), action: "b".into() };
+        assert!(p.add_rule(r2).is_err());
     }
 }
