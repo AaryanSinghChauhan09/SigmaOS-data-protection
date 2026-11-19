@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! SigmaOS-data-protection: data protection model.
 //!
 //! Real implementation: rules, policies, DLP, and validation.
